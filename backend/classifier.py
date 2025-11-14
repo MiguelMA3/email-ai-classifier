@@ -2,12 +2,14 @@ from transformers import pipeline
 
 try:
     print("Carregando modelo de classificação...")
-    classifier = pipeline("zero-shot-classification", model="poltextlab/xlm-roberta-large-portuguese-cap-v3")
-    print("Modelo de classificação carregado.")
+    CLASSIFIER_MODEL = "FacebookAI/xlm-roberta-base"
+    classifier = pipeline("zero-shot-classification", model=CLASSIFIER_MODEL)
+    print(f"Modelo de classificação ({CLASSIFIER_MODEL}) carregado.")
 
     print("Carregando modelo de geração (Português)...")
-    generator = pipeline("text-generation", model="unicamp-dl/ptt5-base-portuguese-vocab")
-    print("Modelo de geração carregado.")
+    GENERATOR_MODEL = "nicholasKluge/Aira-2-portuguese-124M" 
+    generator = pipeline("text-generation", model=GENERATOR_MODEL)
+    print(f"Modelo de geração ({GENERATOR_MODEL}) carregado.")
 
     if generator.tokenizer.pad_token_id is None:
         generator.tokenizer.pad_token_id = generator.model.config.eos_token_id
@@ -22,13 +24,23 @@ def classify_email_text(text):
     if not classifier:
         raise RuntimeError("O pipeline de classificação não foi carregado.")
         
-    candidate_labels = ["produtivo", "improdutivo"]
-    hypothesis_template = "Este email é {}." 
+    LABEL_PRODUTIVO = "tarefa profissional, pedido urgente ou responsabilidade"
+
+    LABEL_IMPRODUTIVO = "mensagem nao solicitada, publicidade ou marketing"
     
-    result = classifier(text, candidate_labels, hypothesis_template=hypothesis_template)
+    zero_shot_labels = [LABEL_PRODUTIVO, LABEL_IMPRODUTIVO]
+
+    hypothesis_template = "Este email é sobre {}."
     
-    category = result['labels'][0]
+    result = classifier(text, zero_shot_labels, hypothesis_template=hypothesis_template, multi_label=False)
+    
+    predicted_label = result['labels'][0]
     score = result['scores'][0]
+    
+    if predicted_label == LABEL_PRODUTIVO:
+        category = "produtivo"
+    else:
+        category = "improdutivo"
     
     return category, score
 
@@ -37,21 +49,31 @@ def generate_suggestion(category):
         raise RuntimeError("O pipeline de geração não foi carregado.")
 
     if category == "produtivo":
-        prompt = "Escreva uma resposta de email profissional e curta, confirmando o recebimento e dizendo que o assunto será analisado. Comece com 'Prezado(a),'."
-        max_tokens = 45
+        prompt = "Você é um assistente de e-mail profissional. A tarefa é gerar uma **resposta de e-mail** profissional, **muito curta** e direta, confirmando o recebimento de uma mensagem importante e informando que o assunto será revisado. **O texto deve ser em Português do Brasil.** Comece a resposta com 'Prezado(a),' e finalize com uma saudação formal como 'Atenciosamente'. Resposta:"
+        max_tokens = 50
     else:
-        prompt = "Escreva uma resposta de email curta e educada, solicitando o cancelamento da inscrição desta lista de emails. Comece com 'Olá,'."
-        max_tokens = 35
+        prompt = "Você é um assistente de e-mail. A tarefa é gerar uma **resposta de e-mail** educada e **muito curta** para **solicitar o cancelamento da inscrição** em uma lista de e-mails. **O texto deve ser em Português do Brasil.** Comece a resposta com 'Olá,' e finalize com 'Obrigado(a)'. Resposta:"
+        max_tokens = 40
 
-    result = generator(prompt, max_new_tokens=max_tokens, num_return_sequences=1, no_repeat_ngram_size=2, early_stopping=True)
+    result = generator(
+        prompt, 
+        max_new_tokens=max_tokens, 
+        num_return_sequences=1, 
+        no_repeat_ngram_size=2, 
+        early_stopping=True,
+        temperature=0.7, 
+        do_sample=True
+    )
     
     generated_text = result[0]['generated_text']
-    
+
     clean_reply = generated_text.replace(prompt, "").strip()
-    
+    if 'Resposta:' in clean_reply and clean_reply.startswith('Resposta:'):
+        clean_reply = clean_reply.split('Resposta:')[-1].strip()
+
     clean_reply = clean_reply.split('\n\n')[0]
     
-    if not clean_reply or len(clean_reply) < 15: # Se a resposta for muito curta/vazia
+    if not clean_reply or len(clean_reply) < 15:
         if category == "produtivo":
             clean_reply = "Prezado(a),\n\nRecebido. Vamos analisar e retornamos em breve.\n\nAtenciosamente."
         else:
