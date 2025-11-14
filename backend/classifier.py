@@ -2,12 +2,16 @@ from transformers import pipeline
 
 try:
     print("Carregando modelo de classificação...")
-    classifier = pipeline("zero-shot-classification", model="facebook/bart-large-mnli")
+    classifier = pipeline("zero-shot-classification", model="poltextlab/xlm-roberta-large-portuguese-cap-v3")
     print("Modelo de classificação carregado.")
 
-    print("Carregando modelo de geração...")
-    generator = pipeline("text-generation", model="distilgpt2")
+    print("Carregando modelo de geração (Português)...")
+    generator = pipeline("text-generation", model="unicamp-dl/ptt5-base-portuguese-vocab")
     print("Modelo de geração carregado.")
+
+    if generator.tokenizer.pad_token_id is None:
+        generator.tokenizer.pad_token_id = generator.model.config.eos_token_id
+        generator.model.config.pad_token_id = generator.model.config.eos_token_id
 
 except Exception as e:
     print(f"Erro ao carregar modelos: {e}")
@@ -33,19 +37,24 @@ def generate_suggestion(category):
         raise RuntimeError("O pipeline de geração não foi carregado.")
 
     if category == "produtivo":
-        prompt = "Escreva uma resposta curta e profissional de e-mail confirmando o recebimento:"
+        prompt = "Escreva uma resposta de email profissional e curta, confirmando o recebimento e dizendo que o assunto será analisado. Comece com 'Prezado(a),'."
+        max_tokens = 45
     else:
-        prompt = "Escreva uma resposta curta e educada para cancelar a inscrição ou recusar:"
+        prompt = "Escreva uma resposta de email curta e educada, solicitando o cancelamento da inscrição desta lista de emails. Comece com 'Olá,'."
+        max_tokens = 35
 
-    result = generator(prompt, max_new_tokens=30, num_return_sequences=1)
+    result = generator(prompt, max_new_tokens=max_tokens, num_return_sequences=1, no_repeat_ngram_size=2, early_stopping=True)
     
     generated_text = result[0]['generated_text']
+    
     clean_reply = generated_text.replace(prompt, "").strip()
     
-    if not clean_reply:
+    clean_reply = clean_reply.split('\n\n')[0]
+    
+    if not clean_reply or len(clean_reply) < 15: # Se a resposta for muito curta/vazia
         if category == "produtivo":
-            clean_reply = "Obrigado, recebido."
+            clean_reply = "Prezado(a),\n\nRecebido. Vamos analisar e retornamos em breve.\n\nAtenciosamente."
         else:
-            clean_reply = "Obrigado, mas não tenho interesse."
+            clean_reply = "Olá,\n\nPor favor, remova meu email desta lista de correspondência.\n\nObrigado(a)."
 
     return clean_reply
